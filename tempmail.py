@@ -333,4 +333,4 @@ app = Client(
 
 setup_temp_mail_handler(app)
 
-    app.run()
+app.run()
