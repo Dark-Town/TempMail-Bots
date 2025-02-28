@@ -236,7 +236,7 @@ def setup_temp_mail_handler(app: Client):
         }
         response = requests.get(f"{BASE_URL}/messages/{message_id}", headers=headers)
 
-        if response.status == 200:
+        if response.status_code == 200:
             details = response.json()
             if 'html' in details:
                 message_text = get_text_from_html(details['html'])
@@ -323,7 +323,7 @@ def setup_temp_mail_handler(app: Client):
 
 # Initialize the bot client
 app = Client(
-    "bot_session",
+    "app_session",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
