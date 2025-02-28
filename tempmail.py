@@ -1,6 +1,3 @@
-# Author (C) @theSmartBisnu
-# Channel : https://t.me/itsSmartDev
-
 import re
 import time
 import random
@@ -10,32 +7,11 @@ import requests
 from bs4 import BeautifulSoup
 from pyrogram.enums import ParseMode, ChatType
 from pyrogram import Client, filters
-
-from pyrogram.types import (
-    InlineKeyboardMarkup,
-    InlineKeyboardButton
-)
-
-from config import (
-    API_ID,
-    API_HASH,
-    BOT_TOKEN
-)
-
-# Initialize the bot client
-bot = Client(
-    "bot_session",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    workers=1000,
-    parse_mode=ParseMode.MARKDOWN
-)
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from config import API_ID, API_HASH, BOT_TOKEN
 
 user_data = {}
-
 token_map = {}
-
 user_tokens = {}
 MAX_MESSAGE_LENGTH = 4000
 
@@ -119,190 +95,242 @@ def list_messages(token):
     else:
         return []
 
+def setup_temp_mail_handler(app: Client):
+    @app.on_message(filters.command(["tmail"], prefixes=["/", "."]))
+    async def generate_mail(client, message):
+        if message.chat.type != ChatType.PRIVATE:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text="**❌ Bro Tempmail Feature Only Works In Private**"
+            )
+            return
 
-@bot.on_message(filters.command('start'))
-async def start(client, message):
-    welcome_message = (
-        "**Welcome to our Temp Mail Bot!** 🎉\n\n"
-        "You can use the following commands to manage temporary email addresses:\n\n"
-        "➢ `/tmail` - Generate a random mail with a password.\n"
-        "➢ `/tmail [username]:[pass]` - Generate a specific mail with a password.\n"
-        "➢ `/cmail [mail token]` - Check the 10 most recent mails using your mail token.\n\n"
-        "✨ **Note:** When you generate a mail and password, you will receive a mail token. "
-        "This token allows you to check the 10 most recent emails received by your temporary mail address. "
-        "Each email has a different token, so please keep your tokens private and secure. 🛡️"
-    )
-    await message.reply(welcome_message)
+        loading_msg = await client.send_message(
+            chat_id=message.chat.id,
+            text="**⚡️Generating Temporary Mail...⏳**"
+        )
 
-
-@bot.on_message(filters.command('tmail'))
-async def generate_mail(client, message):
-    if message.chat.type != ChatType.PRIVATE:
-        await message.reply("**Please use this bot in private chat only.**")
-        return
-
-    loading_msg = await message.reply("**Generating your temporary email...**")
-
-    args_text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
-    args = args_text.split()
-    if len(args) == 1 and ':' in args[0]:
-        username, password = args[0].split(':')
-    else:
-        username = generate_random_username()
-        password = generate_random_password()
-
-    domain = get_domain()
-    if not domain:
-        await message.reply("**Failed to retrieve domain try Again**")
-        await bot.delete_messages(message.chat.id, [loading_msg.message_id])
-        return
-
-    email = f"{username}@{domain}"
-    account = create_account(email, password)
-    if not account:
-        await message.reply("**Username already taken. Choose another one.**")
-        await bot.delete_messages(message.chat.id, [loading_msg.message_id])
-        return
-
-    time.sleep(2)
-
-    token = get_token(email, password)
-    if not token:
-        await message.reply("**Failed to retrieve token.**")
-        await bot.delete_messages(message.chat.id, [loading_msg.message_id])
-        return
-
-    short_id = short_id_generator(email)
-    token_map[short_id] = token
-
-    output_message = (
-        "**📧 Smart-Email Details 📧**\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"**📧 Email:** `{email}`\n"
-        f"**🔑 Password:** `{password}`\n"
-        f"**🔒 Token:** `{token}`\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "**Note: Keep the token to Access Mail**"
-    )
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton("Check Emails", callback_data=f"check_{short_id}")]])
-
-    await message.reply(output_message, reply_markup=keyboard)
-    await bot.delete_messages(message.chat.id, [loading_msg.id])
-
-@bot.on_callback_query(filters.regex(r'^check_'))
-async def check_mail(client, callback_query):
-    short_id = callback_query.data.split('_')[1]
-    token = token_map.get(short_id)
-    if not token:
-        await callback_query.message.reply("**Session expired, Please use /cmail with your token.**")
-        return
-
-    user_tokens[callback_query.from_user.id] = token
-    
-    messages = list_messages(token)
-    if not messages:
-        await callback_query.answer("No messages received ❌", show_alert=True)
-        return
-
-    loading_msg = await callback_query.message.reply("**⏳ Checking Mails.. Please wait.**")
-
-    output = "**📧 Your Smart-Mail Messages 📧**\n"
-    output += "**━━━━━━━━━━━━━━━━━━**\n"
-    
-    buttons = []
-    for idx, msg in enumerate(messages[:10], 1):
-        output += f"{idx}. From: `{msg['from']['address']}` - Subject: {msg['subject']}\n"
-        button = InlineKeyboardButton(f"{idx}", callback_data=f"read_{msg['id']}")
-        buttons.append(button)
-    
-    keyboard = []
-    for i in range(0, len(buttons), 5):
-        keyboard.append(buttons[i:i+5])
-
-    await callback_query.message.reply(output, reply_markup=InlineKeyboardMarkup(keyboard))
-    await bot.delete_messages(callback_query.message.chat.id, [loading_msg.id])
-
-@bot.on_callback_query(filters.regex(r"^close_message"))
-async def close_message(client, callback_query):
-    await callback_query.message.delete()
-
-@bot.on_callback_query(filters.regex(r"^read_"))
-async def read_message(client, callback_query):
-    message_id = callback_query.data.split('_')[1]
-    token = user_tokens.get(callback_query.from_user.id)
-
-    if not token:
-        await callback_query.message.reply("**Token not found. Please use /cmail with your token again.**")
-        return
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Authorization": f"Bearer {token}"
-    }
-    response = requests.get(f"{BASE_URL}/messages/{message_id}", headers=headers)
-
-    if response.status_code == 200:
-        details = response.json()
-        if 'html' in details:
-            message_text = get_text_from_html(details['html'])
-        elif 'text' in details:
-            message_text = details['text']
+        args_text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
+        args = args_text.split()
+        if len(args) == 1 and ':' in args[0]:
+            username, password = args[0].split(':')
         else:
-            message_text = "Content not available."
+            username = generate_random_username()
+            password = generate_random_password()
+
+        domain = get_domain()
+        if not domain:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text="**❌Failed to retrieve domain try Again**"
+            )
+            await client.delete_messages(message.chat.id, [loading_msg.message_id])
+            return
+
+        email = f"{username}@{domain}"
+        account = create_account(email, password)
+        if not account:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text="**❌Username already taken. Choose another one.**"
+            )
+            await client.delete_messages(message.chat.id, [loading_msg.message_id])
+            return
+
+        time.sleep(2)
+
+        token = get_token(email, password)
+        if not token:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text="**❌Failed to retrieve token**"
+            )
+            await client.delete_messages(message.chat.id, [loading_msg.message_id])
+            return
+
+        short_id = short_id_generator(email)
+        token_map[short_id] = token
+
+        output_message = (
+            "**📧 Smart-Email Details 📧**\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"**📧 Email:** `{email}`\n"
+            f"**🔑 Password:** `{password}`\n"
+            f"**🔒 Token:** `{token}`\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "**Note: Keep the token to Access Mail**"
+        )
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton("Incoming Emails", callback_data=f"check_{short_id}")]])
+
+        await client.send_message(
+            chat_id=message.chat.id,
+            text=output_message,
+            reply_markup=keyboard
+        )
+        await client.delete_messages(message.chat.id, [loading_msg.id])
+
+    @app.on_callback_query(filters.regex(r'^check_'))
+    async def check_mail(client, callback_query):
+        short_id = callback_query.data.split('_')[1]
+        token = token_map.get(short_id)
+        if not token:
+            await client.send_message(
+                chat_id=callback_query.message.chat.id,
+                text="**❌Session expired, Please use .cmail or /cmail with your token.**"
+            )
+            return
+
+        user_tokens[callback_query.from_user.id] = token
         
-        # Truncate the message if it's too long
-        if len(message_text) > MAX_MESSAGE_LENGTH:
-            message_text = message_text[:MAX_MESSAGE_LENGTH - 100] + "... [message truncated]"
+        messages = list_messages(token)
+        if not messages:
+            await callback_query.answer("No messages received ❌", show_alert=True)
+            return
 
-        output = f"**From:** `{details['from']['address']}`\n**Subject:** `{details['subject']}`\n━━━━━━━━━━━━━━━━━━\n{message_text}"
+        loading_msg = await client.send_message(
+            chat_id=callback_query.message.chat.id,
+            text="**⚡️Checking Mails.. Please wait⏳**"
+        )
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Close", callback_data="close_message")]
-        ])
+        output = "**📧 Your Smart-Mail Messages 📧**\n"
+        output += "**━━━━━━━━━━━━━━━━━━**\n"
+        
+        buttons = []
+        for idx, msg in enumerate(messages[:10], 1):
+            output += f"{idx}. From: `{msg['from']['address']}` - Subject: {msg['subject']}\n"
+            button = InlineKeyboardButton(f"{idx}", callback_data=f"read_{msg['id']}")
+            buttons.append(button)
+        
+        keyboard = []
+        for i in range(0, len(buttons), 5):
+            keyboard.append(buttons[i:i+5])
 
-        sent_message = await callback_query.message.reply(output, disable_web_page_preview=True, reply_markup=keyboard)
+        await client.send_message(
+            chat_id=callback_query.message.chat.id,
+            text=output,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        await client.delete_messages(callback_query.message.chat.id, [loading_msg.id])
 
-    else:
-        await callback_query.message.reply("**Error retrieving message details.**")
+    @app.on_callback_query(filters.regex(r"^close_message"))
+    async def close_message(client, callback_query):
+        await callback_query.message.delete()
 
+    @app.on_callback_query(filters.regex(r"^read_"))
+    async def read_message(client, callback_query):
+        message_id = callback_query.data.split('_')[1]
+        token = user_tokens.get(callback_query.from_user.id)
 
-@bot.on_message(filters.command('cmail'))
-async def manual_check_mail(client, message):
-    if message.chat.type != ChatType.PRIVATE:
-        await message.reply("**Please use this bot in private chat only.**")
-        return
+        if not token:
+            await client.send_message(
+                chat_id=callback_query.message.chat.id,
+                text="**❌Token not found. Please use .cmail or /cmail with your token again**"
+            )
+            return
 
-    loading_msg = await message.reply("**⏳ Checking Mails.. Please wait.**")
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}"
+        }
+        response = requests.get(f"{BASE_URL}/messages/{message_id}", headers=headers)
 
-    token = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
-    if not token:
-        await message.reply("**Please provide a token after the /cmail command.**")
-        await bot.delete_messages(message.chat.id, [loading_msg.id])
-        return
+        if response.status == 200:
+            details = response.json()
+            if 'html' in details:
+                message_text = get_text_from_html(details['html'])
+            elif 'text' in details:
+                message_text = details['text']
+            else:
+                message_text = "Content not available."
+            
+            # Truncate the message if it's too long
+            if len(message_text) > MAX_MESSAGE_LENGTH:
+                message_text = message_text[:MAX_MESSAGE_LENGTH - 100] + "... [message truncated]"
 
-    user_tokens[message.from_user.id] = token
-    messages = list_messages(token)
-    if not messages:
-        await message.reply("**❌ No messages found or maybe wrong token**")
-        await bot.delete_messages(message.chat.id, [loading_msg.id])
-        return
+            output = f"**From:** `{details['from']['address']}`\n**Subject:** `{details['subject']}`\n━━━━━━━━━━━━━━━━━━\n{message_text}"
 
-    output = "**📧 Your Smart-Mail Messages 📧**\n"
-    output += "**━━━━━━━━━━━━━━━━━━**\n"
-    
-    buttons = []
-    for idx, msg in enumerate(messages[:10], 1):
-        output += f"{idx}. From: {msg['from']['address']} - Subject: {msg['subject']}\n"
-        button = InlineKeyboardButton(f"{idx}", callback_data=f"read_{msg['id']}")
-        buttons.append(button)
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Close", callback_data="close_message")]
+            ])
 
-    keyboard = []
-    for i in range(0, len(buttons), 5):
-        keyboard.append(buttons[i:i+5])
+            sent_message = await client.send_message(
+                chat_id=callback_query.message.chat.id,
+                text=output,
+                disable_web_page_preview=True,
+                reply_markup=keyboard
+            )
 
-    await message.reply(output, reply_markup=InlineKeyboardMarkup(keyboard))
-    await bot.delete_messages(message.chat.id, [loading_msg.id])
+        else:
+            await client.send_message(
+                chat_id=callback_query.message.chat.id,
+                text="**❌ Error retrieving message details**"
+            )
 
-bot.run()
+    @app.on_message(filters.command(["cmail"], prefixes=["/", "."]))
+    async def manual_check_mail(client, message):
+        if message.chat.type != ChatType.PRIVATE:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text="**❌ Bro Tempmail Feature Only Works In Private**"
+            )
+            return
+
+        loading_msg = await client.send_message(
+            chat_id=message.chat.id,
+            text="**⚡️Checking Mails.. Please wait⏳**"
+        )
+
+        token = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
+        if not token:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text="**❌ Please provide a token after the .cmail or /cmail command.**"
+            )
+            await client.delete_messages(message.chat.id, [loading_msg.id])
+            return
+
+        user_tokens[message.from_user.id] = token
+        messages = list_messages(token)
+        if not messages:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text="**❌ No messages found or maybe wrong token**"
+            )
+            await client.delete_messages(message.chat.id, [loading_msg.id])
+            return
+
+        output = "**📧 Your Smart-Mail Messages 📧**\n"
+        output += "**━━━━━━━━━━━━━━━━━━**\n"
+        
+        buttons = []
+        for idx, msg in enumerate(messages[:10], 1):
+            output += f"{idx}. From: {msg['from']['address']} - Subject: {msg['subject']}\n"
+            button = InlineKeyboardButton(f"{idx}", callback_data=f"read_{msg['id']}")
+            buttons.append(button)
+
+        keyboard = []
+        for i in range(0, len(buttons), 5):
+            keyboard.append(buttons[i:i+5])
+
+        await client.send_message(
+            chat_id=message.chat.id,
+            text=output,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        await client.delete_messages(message.chat.id, [loading_msg.id])
+
+# Initialize the bot client
+app = Client(
+    "bot_session",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    workers=1000,
+    parse_mode=ParseMode.MARKDOWN
+)
+
+setup_temp_mail_handler(app)
+
+    app.run()
